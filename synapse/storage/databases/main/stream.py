@@ -334,6 +334,7 @@ class StreamWorkerStore(EventsWorkerStore, SQLBaseStore, metaclass=abc.ABCMeta):
             entity_column="room_id",
             stream_column="stream_ordering",
             max_value=events_max,
+            limit=1000,
         )
         self._events_stream_cache = StreamChangeCache(
             "EventsRoomStreamChangeCache",
