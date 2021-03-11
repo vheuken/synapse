@@ -359,6 +359,8 @@ class FederationServer(FederationBase):
                 for pdu in pdus_by_room[room_id]:
                     pdu_results[pdu.event_id] = await process_pdu(pdu)
 
+                logger.debug("Processed all PDU for %s", room_id)
+
         async def process_pdu(pdu: EventBase) -> JsonDict:
             event_id = pdu.event_id
             with pdu_process_time.time():
@@ -381,6 +383,8 @@ class FederationServer(FederationBase):
         await concurrently_execute(
             process_pdus_for_room, pdus_by_room.keys(), TRANSACTION_CONCURRENCY_LIMIT
         )
+
+        logger.debug("Processed all PDUs in txn")
 
         if newest_pdu_ts and origin in self._federation_metrics_domains:
             last_pdu_ts_metric.labels(server_name=origin).set(newest_pdu_ts / 1000)
@@ -406,6 +410,8 @@ class FederationServer(FederationBase):
             getattr(transaction, "edus", []),
             TRANSACTION_CONCURRENCY_LIMIT,
         )
+
+        logger.debug("Processed all EDUs in txn")
 
     async def on_room_state_request(
         self, origin: str, room_id: str, event_id: Optional[str]

@@ -2250,9 +2250,11 @@ class FederationHandler(BaseHandler):
                     event, context
                 )
 
+            logger.debug("Persisting %s", event.event_id)
             await self.persist_events_and_notify(
                 event.room_id, [(event, context)], backfilled=backfilled
             )
+            logger.debug("Persisted %s", event.event_id)
         except Exception:
             run_in_background(
                 self.store.remove_push_actions_from_staging, event.event_id
@@ -2493,7 +2495,9 @@ class FederationHandler(BaseHandler):
             e for k, e in current_state_ids.items() if k in auth_types
         ]
 
+        logger.debug("Fetching auth event list %s", current_state_ids_list)
         auth_events_map = await self.store.get_events(current_state_ids_list)
+        logger.debug("Got auth events %s", auth_events_map.values())
         current_auth_events = {
             (e.type, e.state_key): e for e in auth_events_map.values()
         }
@@ -2504,6 +2508,9 @@ class FederationHandler(BaseHandler):
             logger.warning("Soft-failing %r because %s", event, e)
             soft_failed_event_counter.inc()
             event.internal_metadata.soft_failed = True
+        except Exception:
+            logger.exception("Got exeption during auth check")
+            raise
 
     async def on_get_missing_events(
         self,
@@ -2625,6 +2632,8 @@ class FederationHandler(BaseHandler):
             await self.event_creation_handler.cache_joined_hosts_for_event(
                 event, context
             )
+
+        logger.debug("Completed _check_event_auth")
 
         return context
 
