@@ -13,9 +13,22 @@
 # limitations under the License.
 
 import abc
+import collections
 import logging
-from typing import TYPE_CHECKING, Dict, Hashable, Iterable, List, Optional, Set, Tuple
+import typing
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Hashable,
+    Iterable,
+    List,
+    Literal,
+    Optional,
+    Set,
+    Tuple,
+)
 
+import attr
 from prometheus_client import Counter
 
 from twisted.internet import defer
@@ -33,8 +46,12 @@ from synapse.metrics import (
     event_processing_loop_room_count,
     events_processed_counter,
 )
-from synapse.metrics.background_process_metrics import run_as_background_process
+from synapse.metrics.background_process_metrics import (
+    run_as_background_process,
+    wrap_as_background_process,
+)
 from synapse.types import JsonDict, ReadReceipt, RoomStreamToken
+from synapse.util import Clock
 from synapse.util.metrics import Measure
 
 if TYPE_CHECKING:
@@ -137,6 +154,56 @@ class AbstractFederationSender(metaclass=abc.ABCMeta):
         raise NotImplementedError()
 
 
+@attr.s
+class _PresenceQueue:
+    sender: "FederationSender" = attr.ib()
+    clock: Clock = attr.ib()
+    queue: typing.OrderedDict[str, Literal[None]] = attr.ib(
+        factory=collections.OrderedDict
+    )
+    processing: bool = attr.ib(default=False)
+
+    def add_to_queue(self, destination: str) -> None:
+        self.queue[destination] = None
+
+        if not self.processing:
+            self.handle()
+
+    @wrap_as_background_process("_PresenceQueue.handle")
+    async def handle(self) -> None:
+        if not self.queue:
+            return
+
+        assert not self.processing
+        self.processing = True
+
+        try:
+            current_sleep_seconds = min(0.1, 30.0 / len(self.queue))
+
+            while self.queue:
+                destination, _ = self.queue.popitem(last=False)
+
+                queue = self.sender._get_per_destination_queue(destination)
+
+                if not queue._new_data_to_send:
+                    continue
+
+                logger.info(
+                    "presence attempt_new_transaction %s, then sleeping %d",
+                    destination,
+                    current_sleep_seconds,
+                )
+                queue.attempt_new_transaction()
+
+                await self.clock.sleep(current_sleep_seconds)
+                current_sleep_seconds = min(
+                    current_sleep_seconds, 30.0 / len(self.queue)
+                )
+
+        finally:
+            self.processing = False
+
+
 class FederationSender(AbstractFederationSender):
     def __init__(self, hs: "HomeServer"):
         self.hs = hs
@@ -209,6 +276,8 @@ class FederationSender(AbstractFederationSender):
         )
 
         self._external_cache = hs.get_external_cache()
+
+        self._presence_queue = _PresenceQueue(self, self.clock)
 
     def _get_per_destination_queue(self, destination: str) -> PerDestinationQueue:
         """Get or create a PerDestinationQueue for the given destination
@@ -520,6 +589,8 @@ class FederationSender(AbstractFederationSender):
             ):
                 continue
             self._get_per_destination_queue(destination).send_presence(states)
+
+            self._presence_queue.add_to_queue(destination)
 
     def build_and_send_edu(
         self,
