@@ -423,7 +423,8 @@ class TlsEndpoint:
         self._connectionCreator = connectionCreator
         self._wrappedEndpoint = wrappedEndpoint
 
-    async def connect(self, protocolFactory):
+    @defer.inlineCallbacks
+    def connect(self, protocolFactory):
         """
         Connect the given protocol factory and unwrap its result.
         """
@@ -441,7 +442,7 @@ class TlsEndpoint:
             lambda protocol: protocol.wrappedProtocol.wrappedProtocol.wrappedProtocol
         )
 
-        results = await defer.gatherResults(
+        results = yield defer.gatherResults(
             [connected_defer, inner_factory.deferred], consumeErrors=True
         ).addErrback(unwrapFirstError)
 
@@ -459,7 +460,9 @@ class TlsEndpointFactory:
         self._tls_client_options_factory = tls_client_options_factory
 
     def endpointForURI(self, parsed_uri: URI) -> interfaces.IStreamClientEndpoint:
-        endpoint = HostnameEndpoint(self._reactor, parsed_uri.host, parsed_uri.port)
+        endpoint = HostnameEndpoint(
+            self._reactor, parsed_uri.host.encode("ascii"), parsed_uri.port
+        )
         if self._tls_client_options_factory:
             endpoint = TlsEndpoint(
                 self._tls_client_options_factory.get_options(parsed_uri.host),
