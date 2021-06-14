@@ -2012,7 +2012,6 @@ async def get_interested_remotes(
         host = get_domain_from_id(user_id)
         hosts_and_states.setdefault(host, set()).update(states)
 
-
     jemalloc._jemalloc_refresh_stats()
     end_mem = jemalloc._mallctl("stats.allocated")
 

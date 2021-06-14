@@ -18,13 +18,15 @@ from typing import Any, Generator, List, Optional
 from netaddr import AddrFormatError, IPAddress, IPSet
 from zope.interface import implementer
 
-from twisted.internet import defer
-from twisted.internet.endpoints import HostnameEndpoint, wrapClientTLS
+from twisted.internet import defer, interfaces
+from twisted.internet.endpoints import HostnameEndpoint, TLSMemoryBIOFactory
 from twisted.internet.interfaces import (
+    IHandshakeListener,
     IProtocolFactory,
     IReactorCore,
     IStreamClientEndpoint,
 )
+from twisted.protocols.policies import ProtocolWrapper, WrappingFactory
 from twisted.web.client import URI, Agent, HTTPConnectionPool
 from twisted.web.http_headers import Headers
 from twisted.web.iweb import IAgent, IAgentEndpointFactory, IBodyProducer
@@ -35,7 +37,7 @@ from synapse.http.federation.srv_resolver import Server, SrvResolver
 from synapse.http.federation.well_known_resolver import WellKnownResolver
 from synapse.logging.context import make_deferred_yieldable, run_in_background
 from synapse.types import ISynapseReactor
-from synapse.util import Clock
+from synapse.util import Clock, unwrapFirstError
 
 logger = logging.getLogger(__name__)
 
@@ -277,10 +279,13 @@ class MatrixHostnameEndpoint:
                 logger.debug("Connecting to %s:%i", host.decode("ascii"), port)
                 endpoint = HostnameEndpoint(self._reactor, host, port)
                 if self._tls_options:
-                    endpoint = wrapClientTLS(self._tls_options, endpoint)
+                    endpoint = TlsEndpoint(self._tls_options, endpoint)
+                # print("Connecting")
                 result = await make_deferred_yieldable(
                     endpoint.connect(protocol_factory)
                 )
+
+                # print(result)
 
                 return result
             except Exception as e:
@@ -354,3 +359,90 @@ def _is_ip_literal(host: bytes) -> bool:
         return True
     except AddrFormatError:
         return False
+
+
+_SEMAPHORES = defer.DeferredSemaphore(100)
+
+
+class _OuterHandshakeProtocol(ProtocolWrapper):
+    def makeConnection(self, transport):
+        # print("Acquiring token")
+        lock: defer.Deferred = _SEMAPHORES.acquire()
+        lock.addCallback(self._make_connection, transport)
+
+    def _make_connection(self, result, transport):
+        # print("Make connection")
+        self.wrappedProtocol.wrappedProtocol.acquired_token = True
+        super().makeConnection(transport)
+
+
+@implementer(IHandshakeListener)
+class _InnerHandshakeProtocol(ProtocolWrapper):
+    def __init__(self, factory, wrappedProtocol):
+        super().__init__(factory, wrappedProtocol)
+
+        self.acquired_token = False
+
+    def handshakeCompleted(self) -> None:
+        # print("Handshake complete")
+
+        if self.acquired_token:
+            _SEMAPHORES.release()
+            self.acquired_token = False
+
+        if not self.factory.deferred.called:
+            self.factory.deferred.callback(None)
+
+    def connectionLost(self, reason):
+        super().connectionLost(reason)
+
+        if self.acquired_token:
+            _SEMAPHORES.release()
+            self.acquired_token = False
+
+        if not self.factory.deferred.called:
+            self.factory.deferred.callback(None)
+
+
+class InnerFactory(WrappingFactory):
+    protocol = _InnerHandshakeProtocol
+
+    def __init__(self, wrappedFactory):
+        super().__init__(wrappedFactory)
+
+        self.deferred = defer.Deferred()
+
+
+class OuterFactory(WrappingFactory):
+    protocol = _OuterHandshakeProtocol
+
+
+@implementer(interfaces.IStreamClientEndpoint)
+class TlsEndpoint:
+    def __init__(self, connectionCreator, wrappedEndpoint):
+        self._connectionCreator = connectionCreator
+        self._wrappedEndpoint = wrappedEndpoint
+
+    async def connect(self, protocolFactory):
+        """
+        Connect the given protocol factory and unwrap its result.
+        """
+        inner_factory = InnerFactory(protocolFactory)
+
+        connected_defer = self._wrappedEndpoint.connect(
+            OuterFactory(
+                TLSMemoryBIOFactory(
+                    self._connectionCreator,
+                    True,
+                    inner_factory,
+                )
+            )
+        ).addCallback(
+            lambda protocol: protocol.wrappedProtocol.wrappedProtocol.wrappedProtocol
+        )
+
+        results = await defer.gatherResults(
+            [connected_defer, inner_factory.deferred], consumeErrors=True
+        ).addErrback(unwrapFirstError)
+
+        return results[0]

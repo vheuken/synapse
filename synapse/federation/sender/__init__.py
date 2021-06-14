@@ -185,7 +185,7 @@ class _PresenceQueue:
 
                 queue = self.sender._get_per_destination_queue(destination)
 
-                if not queue._new_data_to_send:
+                if not queue._new_data_to_send or queue.transmission_loop_running:
                     continue
 
                 logger.info(
