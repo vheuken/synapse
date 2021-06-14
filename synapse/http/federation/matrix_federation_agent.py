@@ -99,10 +99,10 @@ class MatrixFederationAgent:
             _well_known_resolver = WellKnownResolver(
                 self._reactor,
                 agent=BlacklistingAgentWrapper(
-                    Agent(
+                    Agent.usingEndpointFactory(
                         self._reactor,
+                        TlsEndpointFactory(reactor, tls_client_options_factory),
                         pool=self._pool,
-                        contextFactory=tls_client_options_factory,
                     ),
                     ip_blacklist=ip_blacklist,
                 ),
@@ -446,3 +446,24 @@ class TlsEndpoint:
         ).addErrback(unwrapFirstError)
 
         return results[0]
+
+
+@implementer(IAgentEndpointFactory)
+class TlsEndpointFactory:
+    def __init__(
+        self,
+        reactor: IReactorCore,
+        tls_client_options_factory: Optional[FederationPolicyForHTTPS],
+    ):
+        self._reactor = reactor
+        self._tls_client_options_factory = tls_client_options_factory
+
+    def endpointForURI(self, parsed_uri: URI) -> interfaces.IStreamClientEndpoint:
+        endpoint = HostnameEndpoint(self._reactor, parsed_uri.host, parsed_uri.port)
+        if self._tls_client_options_factory:
+            endpoint = TlsEndpoint(
+                self._tls_client_options_factory.get_options(self._parsed_uri.host),
+                endpoint,
+            )
+
+        return endpoint
