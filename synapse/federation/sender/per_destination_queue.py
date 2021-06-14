@@ -34,6 +34,7 @@ from synapse.metrics import sent_transactions_counter
 from synapse.metrics.background_process_metrics import run_as_background_process
 from synapse.types import ReadReceipt
 from synapse.util.retryutils import NotRetryingDestination, get_retry_limiter
+from synapse.metrics import jemalloc
 
 if TYPE_CHECKING:
     import synapse.server
@@ -610,6 +611,8 @@ class _TransactionQueueManager:
     _pdus = attr.ib(type=List[EventBase], factory=list)
 
     async def __aenter__(self) -> Tuple[List[EventBase], List[Edu]]:
+        jemalloc._jemalloc_refresh_stats()
+        start_mem = jemalloc._mallctl("stats.allocated")
         # First we calculate the EDUs we want to send, if any.
 
         # We start by fetching device related EDUs, i.e device updates and to
@@ -689,6 +692,13 @@ class _TransactionQueueManager:
                 -1
             ].internal_metadata.stream_ordering
             assert self._last_stream_ordering
+
+        jemalloc._jemalloc_refresh_stats()
+        end_mem = jemalloc._mallctl("stats.allocated")
+
+        logger.info(
+            "_TransactionQueueManager %s, diff %s", end_mem, end_mem - start_mem
+        )
 
         return self._pdus, pending_edus
 
