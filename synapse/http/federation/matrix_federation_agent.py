@@ -460,9 +460,7 @@ class TlsEndpointFactory:
         self._tls_client_options_factory = tls_client_options_factory
 
     def endpointForURI(self, parsed_uri: URI) -> interfaces.IStreamClientEndpoint:
-        endpoint = HostnameEndpoint(
-            self._reactor, parsed_uri.host.encode("ascii"), parsed_uri.port
-        )
+        endpoint = HostnameEndpoint(self._reactor, parsed_uri.host, parsed_uri.port)
         if self._tls_client_options_factory:
             endpoint = TlsEndpoint(
                 self._tls_client_options_factory.get_options(parsed_uri.host),
