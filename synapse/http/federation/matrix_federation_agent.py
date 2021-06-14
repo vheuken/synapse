@@ -462,7 +462,7 @@ class TlsEndpointFactory:
         endpoint = HostnameEndpoint(self._reactor, parsed_uri.host, parsed_uri.port)
         if self._tls_client_options_factory:
             endpoint = TlsEndpoint(
-                self._tls_client_options_factory.get_options(self._parsed_uri.host),
+                self._tls_client_options_factory.get_options(parsed_uri.host),
                 endpoint,
             )
 
