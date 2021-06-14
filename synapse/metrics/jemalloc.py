@@ -23,6 +23,10 @@ from synapse.metrics import REGISTRY, GaugeMetricFamily
 logger = logging.getLogger(__name__)
 
 
+_jemalloc_refresh_stats = None
+_mallctl = None
+
+
 def _setup_jemalloc_stats():
     """Checks to see if jemalloc is loaded, and hooks up a collector to record
     statistics exposed by jemalloc.
@@ -56,6 +60,9 @@ def _setup_jemalloc_stats():
     logger.debug("Found jemalloc at %s", jemalloc_path)
 
     jemalloc = ctypes.CDLL(jemalloc_path)
+
+    global _jemalloc_refresh_stats
+    global _mallctl
 
     def _mallctl(
         name: str, read: bool = True, write: Optional[int] = None

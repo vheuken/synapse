@@ -189,16 +189,17 @@ class _PresenceQueue:
                     continue
 
                 logger.info(
-                    "presence attempt_new_transaction %s, then sleeping %d",
+                    "presence attempt_new_transaction %s, then sleeping %f",
                     destination,
                     current_sleep_seconds,
                 )
                 queue.attempt_new_transaction()
 
                 await self.clock.sleep(current_sleep_seconds)
-                current_sleep_seconds = min(
-                    current_sleep_seconds, 30.0 / len(self.queue)
-                )
+                if self.queue:
+                    current_sleep_seconds = min(
+                        current_sleep_seconds, 30.0 / len(self.queue)
+                    )
 
         finally:
             self.processing = False

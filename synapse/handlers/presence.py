@@ -65,6 +65,7 @@ from synapse.util.async_helpers import Linearizer
 from synapse.util.caches.descriptors import _CacheContext, cached
 from synapse.util.metrics import Measure
 from synapse.util.wheel_timer import WheelTimer
+from synapse.metrics import jemalloc
 
 if TYPE_CHECKING:
     from synapse.server import HomeServer
@@ -1989,6 +1990,9 @@ async def get_interested_remotes(
     Returns:
         A map from destinations to presence states to send to that destination.
     """
+    jemalloc._jemalloc_refresh_stats()
+    start_mem = jemalloc._mallctl("stats.allocated")
+
     hosts_and_states: Dict[str, Set[UserPresenceState]] = {}
 
     # First we look up the rooms each user is in (as well as any explicit
@@ -2007,6 +2011,12 @@ async def get_interested_remotes(
     for user_id, states in users_to_states.items():
         host = get_domain_from_id(user_id)
         hosts_and_states.setdefault(host, set()).update(states)
+
+
+    jemalloc._jemalloc_refresh_stats()
+    end_mem = jemalloc._mallctl("stats.allocated")
+
+    logger.info("get_interested_remotes %s, diff %s", end_mem, end_mem - start_mem)
 
     return hosts_and_states
 
